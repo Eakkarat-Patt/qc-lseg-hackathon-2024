@@ -24,7 +24,7 @@ df2 = pd.DataFrame(index=['2015-12-31', '2016-12-31', '2017-12-31',
 
 
 for symbol in df2.columns:
-    df2[symbol] = df[df.Instrument == symbol]['Governance Pillar Score']
+    df2[symbol] = df[df.Instrument == symbol]['Social Pillar Score']
 
 gov_df = pd.DataFrame()
 for year in ['2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022']:
