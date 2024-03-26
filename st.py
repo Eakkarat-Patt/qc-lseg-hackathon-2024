@@ -12,12 +12,14 @@ import riskfolio as rp
 from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import black_litterman, risk_models
 from pypfopt import BlackLittermanModel
-from pypfopt import DiscreteAllocation
+import seaborn as sns
+
 
 # plt.style.use('dark_background')
 
 class SteamLit:
     def __init__(self):
+        self.weights_df = None
         self.end_test_at = None
         self.with_esg = None
         self.X_test = None
@@ -34,7 +36,6 @@ class SteamLit:
         self.start = None
         self.end = None
 
-
         if 'run' not in st.session_state:
             st.session_state['run'] = False
 
@@ -47,31 +48,20 @@ class SteamLit:
                                        tuple(self.stock_name),
                                        ['BANPU.BK', 'BCP.BK', 'CENTEL.BK', 'CPN.BK', 'DELTA.BK', 'IRPC.BK', 'MINT.BK',
                                         'PTT.BK', 'PTTGC.BK', 'SCC.BK', 'TOP.BK', 'WHA.BK'])
-        # self.universe = st.multiselect('Stock Name',
-        #                                tuple(self.stock_name),
-        #                                ['BANPU.BK', 'BCP.BK'])
         print(self.universe)
+        self.start = st.selectbox('Start Train',
+                                   (self.stock_rets.index.to_list()))
+        self.end = st.selectbox('Start Test',
+                                   (self.stock_rets.index.to_list()[1:-12]),82)
 
-        self.start = st.date_input('Start Train',
-                                   value=datetime.date(2015, 12, 31),
-                                   min_value=self.stock_prices.index[0].date(),
-                                   max_value=(self.stock_prices.index[-1] - relativedelta(months=2)).date())
-
-
-        self.end = st.date_input('Start Test',
-                                 value=datetime.date(2022, 1, 31),
-                                 min_value=self.stock_prices.index[0].date(),
-                                 max_value=(self.stock_prices.index[-1] - relativedelta(months=1)).date())
-
-        # self.end = st.date_input('Start Test',
-        #                          value=datetime.date(2017, 1, 31),
-        #                          min_value=self.stock_prices.index[0].date(),
-        #                          max_value=(self.stock_prices.index[-1] - relativedelta(months=1)).date())
         self.start_train_at = pd.to_datetime(self.start)
-        self.end_train_at = pd.to_datetime(self.end - datetime.timedelta(days=1))
+
         self.start_test_at = pd.to_datetime(self.end)
-        self.end_test_at = pd.to_datetime(self.end + relativedelta(months=1))
-        self.with_esg = st.toggle('Include ESG Factors', True)
+        position = self.stock_rets.index.to_list().index(self.end)
+        self.end_test_at = self.stock_rets.index[position+1]
+
+        # self.with_esg = st.toggle('Include ESG Factors', True)
+        self.with_esg = True
         print(self.start_train_at, self.end_train_at, self.start_test_at)
         if not self.universe:
             st.warning('The stock list is empty!')
@@ -80,6 +70,7 @@ class SteamLit:
             st.button("Run", on_click=self.click_button)
 
     def get_data(self):
+
         self.stock_prices = pd.read_parquet('stock_prices.parquet')
         self.stock_name = self.stock_prices.columns.to_list()
         self.ext_factors = pd.read_parquet('factors.parquet')
@@ -87,16 +78,12 @@ class SteamLit:
         min_end = min(self.stock_prices.index[-1], self.ext_factors.index[-1])
         self.stock_prices = self.stock_prices.loc[max_start:min_end]
         self.ext_factors = self.ext_factors.loc[max_start:min_end]
-
-    def pre_preprocess(self):
-        # self.stock_prices = self.stock_prices.loc[self.start:self.end, :]
-        # self.ext_factors = self.ext_factors.loc[self.start:self.end, :]
-        # # self.stock_prices = self.stock_prices.loc[self.start:'2016-12-31', :]
-        # # self.ext_factors = self.ext_factors.loc[self.start:'2016-12-31', :]
-
         self.stock_rets = self.stock_prices.pct_change()
+        self.stock_return_daily = self.stock_rets.copy()
         self.ext_factors = self.ext_factors.resample('M').agg(lambda x: (x + 1).prod() - 1)
         self.stock_rets = self.stock_rets.resample('M').agg(lambda x: (x + 1).prod() - 1)
+
+    def pre_preprocess(self):
 
         self.ext_factors[[f'{factor}_lag' for factor in self.ext_factors.columns]] = self.ext_factors.shift(1)
         self.stock_rets[[f'{symbol}_lag' for symbol in self.stock_rets.columns]] = self.stock_rets.shift(1)
@@ -108,8 +95,8 @@ class SteamLit:
              self.ext_factors.loc[self.start_train_at:self.end_train_at, :]], axis=1)
         self.X_test = pd.concat(
             [self.stock_rets.loc[self.start_test_at:, :], self.ext_factors.loc[self.start_test_at:, :]], axis=1)
-        print(self.X_test)
-        print(self.X_train)
+        st.write('Testing Period: ', self.start_test_at.date(), 'to ', self.end_test_at.date())
+
 
     def train(self):
         model_dict = {}
@@ -147,6 +134,7 @@ class SteamLit:
         return model_dict
 
     def predict(self, X, symbol, model):
+
         draw = model.posterior['draw'].shape[0]
         beta0_sample = model.posterior['beta0']
         beta1_sample = model.posterior['beta1']
@@ -166,10 +154,8 @@ class SteamLit:
         next_period_return = np.array(next_period_return).reshape(draw, )
         return next_period_return
 
-    def fit(self,model_dict):
+    def fit(self, model_dict):
 
-        st.write('Starting test: ',self.start_test_at.date())
-        st.write('Ending test: ', self.end_test_at.date())
         portfolio = self.stock_prices.loc[self.start_test_at:self.end_test_at,
                     self.universe]
         S = risk_models.CovarianceShrinkage(portfolio).ledoit_wolf()
@@ -177,8 +163,8 @@ class SteamLit:
         views = {}
         view_uncertainty = {}
         for symbol in self.universe:
-            pred = self.predict(self.X_test.loc[(self.start_test_at + relativedelta(months=1)), :], symbol,
-                                model_dict[symbol])
+            pred = self.predict(self.X_test.loc[self.end_test_at, :], symbol, model_dict[symbol])
+
             views[symbol] = pred.mean()
             view_uncertainty[symbol] = pred.var()
 
@@ -204,15 +190,44 @@ class SteamLit:
         # st.pyplot(plt)
         # st.table(az.summary(self.ar_trace, kind="stats"))
 
-    def result(self,weights,perf):
+    def plot_return(self):
 
-        weights_df = pd.DataFrame(list(weights.items()), columns=['Stock', 'Weight'])
+        weights_talbe = self.weights_df
+        weights_talbe = weights_talbe.T
+        weights_talbe.columns = weights_talbe.loc['Stock']
+        weights_talbe = weights_talbe.drop(index='Stock')
 
-        st.write('Expected annual return (%):', round(perf[0]*100,2))
+        return_daily = self.stock_return_daily.copy()
+        st.write('Portfolio Return and Value-at-Risk (VaR) from ', (self.start_test_at - relativedelta(years=1)).date(), 'to ', self.start_test_at.date())
+        return_daily = return_daily.loc[self.start_test_at - relativedelta(years=1):self.start_test_at,self.universe]
+        print(weights_talbe,return_daily)
+        new_df = pd.DataFrame()
+        for i in return_daily.columns.to_list():
+            new_df[i] = return_daily[i]*weights_talbe.loc['Weight',i]
+        print(new_df)
+
+        new_df['SUM'] = new_df.sum(axis=1, numeric_only=True)
+
+
+        var = rp.VaR_Hist(new_df['SUM'], alpha=0.05)
+
+        plt.figure(figsize=(10, 6))
+        sns.histplot(new_df['SUM'])
+        plt.title('Portfolio Return')
+        plt.xlabel('return')
+        plt.ylabel('Frequency')
+        plt.axvline(x=-var, color='red', linestyle='-', label=f'95% confidence VaR: -{round(var, 2) * 100}%')
+        plt.legend()
+        st.pyplot(plt)
+    def plot_pie(self, weights, perf):
+        # self.weights_df = pd.DataFrame(weights).T
+        self.weights_df = pd.DataFrame(list(weights.items()), columns=['Stock', 'Weight'])
+
+        st.write('Expected annual return (%):', round(perf[0] * 100, 2))
         st.write('Annual volatility (%):', round(perf[1] * 100, 2))
         st.write('Sharpe Ratio:', round(perf[2], 2))
 
-        weights_df_plot = weights_df
+        weights_df_plot = self.weights_df
         weights_df_plot.index = weights_df_plot['Stock']
         weights_df_plot = weights_df_plot.drop(columns=['Stock'])
 
@@ -220,8 +235,6 @@ class SteamLit:
         rp.plot_pie(w=weights_df_plot, title='Asset Allocation', others=0.05, nrow=25,
                     cmap="tab20", ax=ax)
         st.pyplot(fig)
-
-
 
 
 
@@ -234,7 +247,8 @@ class SteamLit:
             self.pre_preprocess()
             model_dict = self.train()
             weights, perf = self.fit(model_dict)
-            self.result(weights,perf)
+            self.plot_pie(weights, perf)
+            self.plot_return()
 
 
 if __name__ == "__main__":
