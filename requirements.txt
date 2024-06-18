@@ -1,0 +1,11 @@
+pymc
+numpyro
+blackjax
+pandas
+pyarrow
+fastparquet
+yfinance
+matplotlib
+seaborn
+PyPortfolioOpt
+riskfolio-lib
